@@ -1,0 +1,49 @@
+# Ignore build output
+bin/
+obj/
+
+# Ignore user-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Ignore Visual Studio Code settings
+.vscode/
+
+# Ignore NuGet packages
+*.nupkg
+packages/
+
+# Ignore test results
+TestResults/
+
+# Ignore coverage reports
+CoverageReport/
+
+# Ignore Docker artifacts
+docker-compose.*
+*.dockerfile
+
+# Ignore logs
+*.log
+
+# Ignore environment files
+.env
+.env.*
+
+# Ignore OS generated files
+Thumbs.db
+.DS_Store
+
+# Ignore other common files
+*.swp
+*.bak
+*.tmp
+
+# Ignore Rider IDE files
+.idea/
+*.iml
+
+# Ignore node_modules (if any)
+node_modules/
