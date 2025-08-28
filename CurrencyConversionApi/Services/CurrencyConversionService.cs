@@ -1,5 +1,6 @@
 using CurrencyConversionApi.Interfaces;
 using CurrencyConversionApi.Models;
+using CurrencyConversionApi.Utilities;
 
 namespace CurrencyConversionApi.Services;
 
@@ -8,11 +9,11 @@ namespace CurrencyConversionApi.Services;
 /// </summary>
 public class CurrencyConversionService : ICurrencyConversionService
 {
-    private readonly IEnumerable<IExchangeRateProvider> _providers;
+    private readonly IExchangeRateProviderFactory _providerFactory;
     private readonly ICacheService _cacheService;
     private readonly ILogger<CurrencyConversionService> _logger;
 
-    // Common currencies with their metadata
+    // Common currencies with their metadata (excluding TRY, PLN, THB, MXN per requirements)
     private static readonly Dictionary<string, Currency> _commonCurrencies = new()
     {
         ["USD"] = new() { Code = "USD", Name = "US Dollar", Symbol = "$", DecimalPlaces = 2 },
@@ -27,17 +28,16 @@ public class CurrencyConversionService : ICurrencyConversionService
         ["KRW"] = new() { Code = "KRW", Name = "South Korean Won", Symbol = "₩", DecimalPlaces = 0 },
         ["BRL"] = new() { Code = "BRL", Name = "Brazilian Real", Symbol = "R$", DecimalPlaces = 2 },
         ["RUB"] = new() { Code = "RUB", Name = "Russian Ruble", Symbol = "₽", DecimalPlaces = 2 },
-        ["MXN"] = new() { Code = "MXN", Name = "Mexican Peso", Symbol = "$", DecimalPlaces = 2 },
         ["SGD"] = new() { Code = "SGD", Name = "Singapore Dollar", Symbol = "S$", DecimalPlaces = 2 },
         ["HKD"] = new() { Code = "HKD", Name = "Hong Kong Dollar", Symbol = "HK$", DecimalPlaces = 2 }
     };
 
     public CurrencyConversionService(
-        IEnumerable<IExchangeRateProvider> providers,
+        IExchangeRateProviderFactory providerFactory,
         ICacheService cacheService,
         ILogger<CurrencyConversionService> logger)
     {
-        _providers = providers;
+        _providerFactory = providerFactory;
         _cacheService = cacheService;
         _logger = logger;
     }
@@ -115,34 +115,32 @@ public class CurrencyConversionService : ICurrencyConversionService
             return cachedList;
         }
 
-        // Try providers in order - always fetch complete rates set
-        foreach (var provider in _providers.OrderBy(p => p.ProviderName))
+        // Try active provider - always fetch complete rates set
+        var activeProvider = _providerFactory.GetActiveProvider();
+        try
         {
-            try
+            // Fetch ALL rates (no symbols filtering at provider level) to cache complete set
+            var allRates = await activeProvider.GetLatestRatesAsync(baseCode, null, cancellationToken);
+            if (allRates?.Any() == true)
             {
-                // Fetch ALL rates (no symbols filtering at provider level) to cache complete set
-                var allRates = await provider.GetLatestRatesAsync(baseCode, null, cancellationToken);
-                if (allRates?.Any() == true)
+                _logger.LogInformation("Got {Count} latest rates from provider {Provider}", allRates.Count(), activeProvider.ProviderName);
+                
+                // Cache the complete rates set
+                await _cacheService.SetLatestRatesAsync(baseCode, allRates, null);
+                
+                // Filter results based on symbols before returning
+                if (symbols?.Any() == true)
                 {
-                    _logger.LogInformation("Got {Count} latest rates from provider {Provider}", allRates.Count(), provider.ProviderName);
-                    
-                    // Cache the complete rates set
-                    await _cacheService.SetLatestRatesAsync(baseCode, allRates, null);
-                    
-                    // Filter results based on symbols before returning
-                    if (symbols?.Any() == true)
-                    {
-                        var filteredRates = allRates.Where(r => symbols.Contains(r.ToCurrency, StringComparer.OrdinalIgnoreCase)).ToList();
-                        return filteredRates;
-                    }
-                    
-                    return allRates;
+                    var filteredRates = allRates.Where(r => symbols.Contains(r.ToCurrency, StringComparer.OrdinalIgnoreCase)).ToList();
+                    return filteredRates;
                 }
+                
+                return allRates;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting latest rates from provider {Provider}", provider.ProviderName);
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting latest rates from provider {Provider}", activeProvider.ProviderName);
         }
 
         _logger.LogWarning("No providers could provide latest rates for {BaseCurrency}", baseCode);
@@ -166,24 +164,22 @@ public class CurrencyConversionService : ICurrencyConversionService
             date.ToString("yyyy-MM-dd"), baseCode, symbols);
 
         // No caching for historical data as per our previous discussion
-        foreach (var provider in _providers.OrderBy(p => p.ProviderName))
+        var activeProvider = _providerFactory.GetActiveProvider();
+        try
         {
-            try
+            // For historical rates, we can fetch with symbols directly since we're not caching
+            var rates = await activeProvider.GetHistoricalRatesAsync(date, baseCode, symbols, cancellationToken);
+            if (rates?.Any() == true)
             {
-                // For historical rates, we can fetch with symbols directly since we're not caching
-                var rates = await provider.GetHistoricalRatesAsync(date, baseCode, symbols, cancellationToken);
-                if (rates?.Any() == true)
-                {
-                    _logger.LogInformation("Got {Count} historical rates from provider {Provider} for {Date}", 
-                        rates.Count(), provider.ProviderName, date.ToString("yyyy-MM-dd"));
-                    return rates;
-                }
+                _logger.LogInformation("Got {Count} historical rates from provider {Provider} for {Date}", 
+                    rates.Count(), activeProvider.ProviderName, date.ToString("yyyy-MM-dd"));
+                return rates;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting historical rates from provider {Provider} for {Date}", 
-                    provider.ProviderName, date.ToString("yyyy-MM-dd"));
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting historical rates from provider {Provider} for {Date}", 
+                activeProvider.ProviderName, date.ToString("yyyy-MM-dd"));
         }
 
         _logger.LogWarning("No providers could provide historical rates for {BaseCurrency} on {Date}", baseCode, date.ToString("yyyy-MM-dd"));
@@ -206,23 +202,21 @@ public class CurrencyConversionService : ICurrencyConversionService
             startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"), baseCode, symbols);
 
         // No caching for time series data due to complexity and size
-        foreach (var provider in _providers.OrderBy(p => p.ProviderName))
+        var activeProvider = _providerFactory.GetActiveProvider();
+        try
         {
-            try
+            var timeSeriesData = await activeProvider.GetTimeSeriesRatesAsync(startDate, endDate, baseCode, symbols, cancellationToken);
+            if (timeSeriesData?.Any() == true)
             {
-                var timeSeriesData = await provider.GetTimeSeriesRatesAsync(startDate, endDate, baseCode, symbols, cancellationToken);
-                if (timeSeriesData?.Any() == true)
-                {
-                    _logger.LogInformation("Got time series data with {Count} dates from provider {Provider}", 
-                        timeSeriesData.Count, provider.ProviderName);
-                    return timeSeriesData;
-                }
+                _logger.LogInformation("Got time series data with {Count} dates from provider {Provider}", 
+                    timeSeriesData.Count, activeProvider.ProviderName);
+                return timeSeriesData;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting time series rates from provider {Provider} for {StartDate} to {EndDate}", 
-                    provider.ProviderName, startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"));
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting time series rates from provider {Provider} for {StartDate} to {EndDate}", 
+                activeProvider.ProviderName, startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"));
         }
 
         _logger.LogWarning("No providers could provide time series rates for {BaseCurrency} from {StartDate} to {EndDate}", 
@@ -254,24 +248,22 @@ public class CurrencyConversionService : ICurrencyConversionService
             return cachedRate;
         }
 
-        // Try providers in order
-        foreach (var provider in _providers.OrderBy(p => p.ProviderName))
+        // Try active provider
+        var activeProvider = _providerFactory.GetActiveProvider();
+        try
         {
-            try
+            var rate = await activeProvider.GetRateAsync(fromCurrency, toCurrency, cancellationToken);
+            if (rate != null)
             {
-                var rate = await provider.GetRateAsync(fromCurrency, toCurrency, cancellationToken);
-                if (rate != null)
-                {
-                    _logger.LogInformation("Got exchange rate from provider {Provider}", provider.ProviderName);
-                    
-                    // Note: Individual rate caching is handled by base currency caching strategy
-                    return rate;
-                }
+                _logger.LogInformation("Got exchange rate from provider {Provider}", activeProvider.ProviderName);
+                
+                // Note: Individual rate caching is handled by base currency caching strategy
+                return rate;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting rate from provider {Provider}", provider.ProviderName);
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting rate from provider {Provider}", activeProvider.ProviderName);
         }
 
         _logger.LogWarning("No providers could provide exchange rate for {From} to {To}", fromCurrency, toCurrency);
@@ -300,18 +292,7 @@ public class CurrencyConversionService : ICurrencyConversionService
 
     private static string ValidateCurrency(string currency, string paramName)
     {
-        if (string.IsNullOrWhiteSpace(currency))
-            throw new ArgumentException("Currency code cannot be null or empty", paramName);
-
-        currency = currency.ToUpper().Trim();
-
-        if (currency.Length != 3)
-            throw new ArgumentException("Currency code must be exactly 3 characters", paramName);
-
-        if (!System.Text.RegularExpressions.Regex.IsMatch(currency, @"^[A-Z]{3}$"))
-            throw new ArgumentException("Currency code must contain only letters", paramName);
-
-        return currency;
+        return CurrencyValidationHelper.ValidateAndNormalizeCurrency(currency, paramName);
     }
 
     private static int GetDecimalPlaces(string currencyCode)

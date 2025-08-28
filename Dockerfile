@@ -8,7 +8,6 @@ WORKDIR /src
 # Copy solution and restore
 COPY CurrencyConversion.sln ./
 COPY CurrencyConversionApi/*.csproj CurrencyConversionApi/
-COPY CurrencyConversionApi.Tests/*.csproj CurrencyConversionApi.Tests/
 RUN dotnet restore "CurrencyConversionApi/CurrencyConversionApi.csproj"
 
 # Copy all sources
@@ -19,9 +18,13 @@ RUN dotnet publish CurrencyConversionApi/CurrencyConversionApi.csproj -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS final
 WORKDIR /app
 
+# Install timezone data (required for TimeZoneInfo)
+RUN apk add --no-cache tzdata
+
 # Non-root user
-RUN addgroup -S app && adduser -S app -G app
-USER app
+RUN addgroup -g 1001 -S appgroup || true
+RUN adduser -S -D -H -u 1001 -G appgroup appuser || true
+USER appuser
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production

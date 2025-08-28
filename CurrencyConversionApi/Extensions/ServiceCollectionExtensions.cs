@@ -80,7 +80,14 @@ public static class ServiceCollectionExtensions
 
         // Core services following the requirements
         services.AddScoped<ICurrencyConversionService, CurrencyConversionService>();
-        services.AddScoped<IExchangeRateProvider, FrankfurterApiProvider>();
+        
+        // Register all exchange rate providers
+        services.AddScoped<FrankfurterApiProvider>();
+        services.AddScoped<ExchangeRateApiProvider>();
+        services.AddScoped<CurrencyApiProvider>();
+        
+        // Register provider factory
+        services.AddScoped<IExchangeRateProviderFactory, ExchangeRateProviderFactory>();
         
         // Choose cache service based on configuration
         // var cacheMode = configuration.GetValue<string>("CacheMode", "optimized");
@@ -92,18 +99,40 @@ public static class ServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<ICorrelationIdService, CorrelationIdService>();
 
-        // HTTP Client for Frankfurter API with retry policy, circuit breaker, and timeout configuration
-        services.AddHttpClient("FrankfurterApi", client =>
+        // HTTP Clients with resilience policies for all providers
+        AddHttpClientWithResilience<FrankfurterApiProvider>(services, "FrankfurterApi", "https://api.frankfurter.app/", "Frankfurter API");
+        AddHttpClientWithResilience<ExchangeRateApiProvider>(services, "ExchangeRateApi", "https://api.exchangerate-api.com/v4/", "ExchangeRate API");
+        AddHttpClientWithResilience<CurrencyApiProvider>(services, "CurrencyApi", "https://api.currencyapi.com/v3/", "Currency API");
+
+        // Memory Cache - no size limits, controlled by item count limits instead
+        services.AddMemoryCache();
+
+        // Validation
+        services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add HTTP client with resilience policies (circuit breaker and retry)
+    /// </summary>
+    private static void AddHttpClientWithResilience<TProvider>(
+        IServiceCollection services, 
+        string clientName, 
+        string baseUrl, 
+        string providerDisplayName) where TProvider : class
+    {
+        services.AddHttpClient(clientName, client =>
         {
-            client.BaseAddress = new Uri("https://api.frankfurter.app/");
-            client.Timeout = TimeSpan.FromSeconds(30); // Global timeout
+            client.BaseAddress = new Uri(baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(30);
         })
-        .AddPolicyHandler((services, request) =>
+        .AddPolicyHandler((serviceProvider, request) =>
         {
-            var config = services.GetRequiredService<IOptions<ExchangeRateConfig>>().Value;
-            var logger = services.GetRequiredService<ILogger<FrankfurterApiProvider>>();
+            var config = serviceProvider.GetRequiredService<IOptions<ExchangeRateConfig>>().Value;
+            var logger = serviceProvider.GetRequiredService<ILogger<TProvider>>();
             
-            // Circuit breaker policy - open circuit after 3 consecutive failures, half-open after 30s
+            // Circuit breaker policy
             var circuitBreakerPolicy = HttpPolicyExtensions
                 .HandleTransientHttpError()
                 .CircuitBreakerAsync(
@@ -111,16 +140,16 @@ public static class ServiceCollectionExtensions
                     durationOfBreak: TimeSpan.FromSeconds(30),
                     onBreak: (result, duration) =>
                     {
-                        logger.LogError("Circuit breaker opened for Frankfurter API. Duration: {Duration}s. Reason: {Reason}", 
-                            duration.TotalSeconds, result.Exception?.Message ?? "HTTP error");
+                        logger.LogError("Circuit breaker opened for {Provider}. Duration: {Duration}s. Reason: {Reason}", 
+                            providerDisplayName, duration.TotalSeconds, result.Exception?.Message ?? "HTTP error");
                     },
                     onReset: () =>
                     {
-                        logger.LogInformation("Circuit breaker reset for Frankfurter API - service recovered");
+                        logger.LogInformation("Circuit breaker reset for {Provider} - service recovered", providerDisplayName);
                     },
                     onHalfOpen: () =>
                     {
-                        logger.LogWarning("Circuit breaker half-open for Frankfurter API - testing service recovery");
+                        logger.LogWarning("Circuit breaker half-open for {Provider} - testing service recovery", providerDisplayName);
                     });
 
             // Retry policy with exponential backoff
@@ -131,21 +160,13 @@ public static class ServiceCollectionExtensions
                     retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (outcome, timespan, retryCount, context) =>
                     {
-                        logger.LogWarning("Retry {RetryCount} for Frankfurter API in {Delay}ms", 
-                            retryCount, timespan.TotalMilliseconds);
+                        logger.LogWarning("Retry {RetryCount} for {Provider} in {Delay}ms", 
+                            retryCount, providerDisplayName, timespan.TotalMilliseconds);
                     });
 
             // Combine policies: Retry first, then circuit breaker
             return Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
         });
-
-        // Memory Cache - no size limits, controlled by item count limits instead
-        services.AddMemoryCache();
-
-        // Validation
-        services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
-
-        return services;
     }
 
     /// <summary>

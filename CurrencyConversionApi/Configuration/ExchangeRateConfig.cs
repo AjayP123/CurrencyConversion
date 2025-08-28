@@ -8,14 +8,9 @@ public class ExchangeRateConfig
     public const string SectionName = "ExchangeRates";
 
     /// <summary>
-    /// Primary exchange rate provider
+    /// Active exchange rate provider
     /// </summary>
-    public string PrimaryProvider { get; set; } = "ExchangeRateAPI";
-
-    /// <summary>
-    /// Fallback providers in order of preference
-    /// </summary>
-    public List<string> FallbackProviders { get; set; } = new();
+    public string ActiveProvider { get; set; } = "Frankfurter";
 
     /// <summary>
     /// Cache duration for exchange rates

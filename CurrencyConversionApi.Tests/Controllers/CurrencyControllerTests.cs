@@ -303,4 +303,39 @@ public class CurrencyControllerTests
         var result = await controller.IsCurrencySupported("USD");
         (result.Result as ObjectResult)!.StatusCode.Should().Be(500);
     }
+
+    [Theory]
+    [InlineData("TRY")]
+    [InlineData("PLN")]
+    [InlineData("THB")]
+    [InlineData("MXN")]
+    public async Task IsCurrencySupported_ExcludedCurrency_Returns400(string currency)
+    {
+        var controller = Create();
+        var result = await controller.IsCurrencySupported(currency);
+        var badRequest = result.Result as BadRequestObjectResult;
+        badRequest.Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData("TRY")]
+    [InlineData("PLN")]
+    [InlineData("THB")]
+    [InlineData("MXN")]
+    public async Task GetLatestRates_ExcludedBaseCurrency_Returns400(string baseCurrency)
+    {
+        var controller = Create();
+        var result = await controller.GetLatestRates(baseCurrency, null);
+        var badRequest = result.Result as BadRequestObjectResult;
+        badRequest.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetLatestRates_ExcludedInSymbols_Returns400()
+    {
+        var controller = Create();
+        var result = await controller.GetLatestRates("EUR", "USD,TRY,GBP");
+        var badRequest = result.Result as BadRequestObjectResult;
+        badRequest.Should().NotBeNull();
+    }
 }

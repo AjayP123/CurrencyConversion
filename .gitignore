@@ -22,8 +22,7 @@ TestResults/
 CoverageReport/
 
 # Ignore Docker artifacts
-docker-compose.*
-*.dockerfile
+# Keep Docker compose files, exclude only .env files
 
 # Ignore logs
 *.log

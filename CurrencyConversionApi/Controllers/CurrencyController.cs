@@ -3,6 +3,7 @@ using CurrencyConversionApi.DTOs;
 using CurrencyConversionApi.Interfaces;
 using CurrencyConversionApi.Services;
 using CurrencyConversionApi.Authorization;
+using CurrencyConversionApi.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using System.ComponentModel.DataAnnotations;
 
@@ -117,15 +118,34 @@ public class CurrencyController : ControllerBase
     {
         try
         {
+            // Validate base currency
+            if (CurrencyValidationHelper.ExcludedCurrencies.Contains(@base?.ToUpper() ?? ""))
+            {
+                var correlationId = _correlationIdService.GetCorrelationId();
+                return BadRequest(ApiResponse<object>.CreateError(
+                    CurrencyValidationHelper.GetExclusionErrorMessage(@base ?? ""), correlationId));
+            }
+
             _logger.LogInformation("Getting latest rates for base currency {BaseCurrency} with symbols filter {Symbols}", @base, symbols);
 
-            // Parse symbols if provided
+            // Parse and validate symbols if provided
             List<string>? targetCurrencies = null;
             if (!string.IsNullOrWhiteSpace(symbols))
             {
-                targetCurrencies = symbols.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                var symbolsList = symbols.Split(',', StringSplitOptions.RemoveEmptyEntries)
                     .Select(s => s.Trim().ToUpper())
                     .ToList();
+
+                // Check for excluded currencies in symbols
+                var excludedSymbols = symbolsList.Where(s => CurrencyValidationHelper.ExcludedCurrencies.Contains(s)).ToList();
+                if (excludedSymbols.Any())
+                {
+                    var correlationId = _correlationIdService.GetCorrelationId();
+                    return BadRequest(ApiResponse<object>.CreateError(
+                        $"The following currencies in symbols are not supported: {string.Join(", ", excludedSymbols)}. Excluded currencies: {string.Join(", ", CurrencyValidationHelper.ExcludedCurrencies)}", correlationId));
+                }
+
+                targetCurrencies = symbolsList;
             }
 
             var rates = await _currencyService.GetLatestRatesAsync(@base, targetCurrencies, cancellationToken);
@@ -370,12 +390,15 @@ public class CurrencyController : ControllerBase
     {
         try
         {
-            _logger.LogInformation("Fetching supported currencies");
+            _logger.LogInformation("Fetching supported currencies (excluding TRY, PLN, THB, MXN)");
 
             var currencies = await _currencyService.GetSupportedCurrenciesAsync(cancellationToken);
             var requestId = _correlationIdService.GetCorrelationId();
             
-            var currencyCodes = currencies.Select(c => c.Code);
+            // Filter out excluded currencies
+            var currencyCodes = currencies
+                .Where(c => !CurrencyValidationHelper.ExcludedCurrencies.Contains(c.Code))
+                .Select(c => c.Code);
             
             return Ok(ApiResponse<IEnumerable<string>>.CreateSuccess(currencyCodes, requestId));
         }
@@ -414,6 +437,14 @@ public class CurrencyController : ControllerBase
             {
                 var requestId = _correlationIdService.GetCorrelationId();
                 return BadRequest(ApiResponse<object>.CreateError("Currency code must be exactly 3 characters", requestId));
+            }
+
+            // Check if currency is excluded
+            if (CurrencyValidationHelper.ExcludedCurrencies.Contains(currencyCode.ToUpper()))
+            {
+                var requestId = _correlationIdService.GetCorrelationId();
+                return BadRequest(ApiResponse<object>.CreateError(
+                    CurrencyValidationHelper.GetExclusionErrorMessage(currencyCode), requestId));
             }
 
             _logger.LogInformation("Checking if currency {Currency} is supported", currencyCode);

@@ -10,9 +10,9 @@ public class SmartCacheConfig
     /// </summary>
     public Func<DateTime>? UtcNowProvider { get; set; }
     /// <summary>
-    /// CET timezone identifier
+    /// CET timezone identifier (cross-platform compatible)
     /// </summary>
-    public string CETTimeZone { get; set; } = "Central European Standard Time";
+    public string CETTimeZone { get; set; } = GetCETTimeZoneId();
 
     /// <summary>
     /// Hour when Frankfurter API updates (16:00 CET)
@@ -65,8 +65,9 @@ public class SmartCacheConfig
     /// </summary>
     public TimeSpan GetOptimalTTL(DateTime? rateDate = null)
     {
-    var now = UtcNowProvider?.Invoke() ?? DateTime.UtcNow;
-        var cetNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(now, CETTimeZone);
+        var now = UtcNowProvider?.Invoke() ?? DateTime.UtcNow;
+        var cetTimeZone = GetCETTimeZoneInfo();
+        var cetNow = TimeZoneInfo.ConvertTime(now, cetTimeZone);
 
         // Historical data caching is disabled
     if (rateDate.HasValue && rateDate.Value.Date < (UtcNowProvider?.Invoke() ?? DateTime.UtcNow).Date)
@@ -109,5 +110,69 @@ public class SmartCacheConfig
         
         // If today's update time has passed, return tomorrow's update time
         return cetNow >= updateTimeToday ? updateTimeToday.AddDays(1) : updateTimeToday;
+    }
+
+    /// <summary>
+    /// Get cross-platform compatible CET timezone identifier
+    /// </summary>
+    private static string GetCETTimeZoneId()
+    {
+        // Try Windows timezone ID first
+        try
+        {
+            TimeZoneInfo.FindSystemTimeZoneById("Central European Standard Time");
+            return "Central European Standard Time";
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            // Try IANA timezone ID (Linux/macOS)
+            try
+            {
+                TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+                return "Europe/Berlin";
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                // Fallback to UTC+1
+                return "W. Europe Standard Time";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get CET TimeZoneInfo with cross-platform support
+    /// </summary>
+    private TimeZoneInfo GetCETTimeZoneInfo()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(CETTimeZone);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            // Fallback: try common CET timezone identifiers
+            var commonCETIds = new[]
+            {
+                "Central European Standard Time", // Windows
+                "Europe/Berlin",                  // IANA
+                "Europe/Paris",                   // IANA alternative
+                "W. Europe Standard Time"         // Windows fallback
+            };
+
+            foreach (var id in commonCETIds)
+            {
+                try
+                {
+                    return TimeZoneInfo.FindSystemTimeZoneById(id);
+                }
+                catch (TimeZoneNotFoundException)
+                {
+                    continue;
+                }
+            }
+
+            // Ultimate fallback: create custom CET timezone
+            return TimeZoneInfo.CreateCustomTimeZone("CET", TimeSpan.FromHours(1), "Central European Time", "CET");
+        }
     }
 }
