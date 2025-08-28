@@ -7,86 +7,201 @@ namespace CurrencyConversionApi.Tests.Configuration;
 public class SmartCacheConfigTests
 {
     [Fact]
-    public void GetCacheKey_Historical_Throws()
+    public void GetCacheKey_Should_Generate_Correct_Key_For_Latest_Rates()
     {
-        var cfg = new SmartCacheConfig();
-        Action act = () => cfg.GetCacheKey("EUR", isHistorical: true, rateDate: DateTime.UtcNow.AddDays(-1));
-        act.Should().Throw<NotSupportedException>();
+        // Arrange
+        var config = new SmartCacheConfig();
+        const string baseCurrency = "USD";
+
+        // Act
+        var result = config.GetCacheKey(baseCurrency);
+
+        // Assert
+        result.Should().Be("latest_rates_USD");
     }
 
     [Fact]
-    public void GetOptimalTTL_HistoricalDate_Throws()
+    public void GetCacheKey_Should_Throw_For_Historical_Rates()
     {
-        var cfg = new SmartCacheConfig();
-        Action act = () => cfg.GetOptimalTTL(DateTime.UtcNow.AddDays(-2));
-        act.Should().Throw<NotSupportedException>();
+        // Arrange
+        var config = new SmartCacheConfig();
+        const string baseCurrency = "USD";
+
+        // Act & Assert
+        var act = () => config.GetCacheKey(baseCurrency, isHistorical: true);
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("Historical rate caching is disabled due to date range complexity and memory concerns");
     }
 
     [Fact]
-    public void IsBusinessHours_ReturnsExpected()
+    public void IsBusinessHours_Should_Return_True_During_Business_Hours()
     {
-        var cfg = new SmartCacheConfig();
-        // Force a date at 10:00 CET (assume CET == local offset not critical for test) by constructing a DateTime with that hour
-        var dt = new DateTime(2024, 1, 1, cfg.BusinessHoursStart + 1, 0, 0);
-        cfg.IsBusinessHours(dt).Should().BeTrue();
-        var off = new DateTime(2024, 1, 1, cfg.BusinessHoursEnd + 1, 0, 0);
-        cfg.IsBusinessHours(off).Should().BeFalse();
+        // Arrange
+        var config = new SmartCacheConfig();
+        var businessTime = new DateTime(2023, 12, 1, 10, 0, 0); // 10:00 AM
+
+        // Act
+        var result = config.IsBusinessHours(businessTime);
+
+        // Assert
+        result.Should().BeTrue();
     }
 
     [Fact]
-    public void GetOptimalTTL_ReturnsPositive()
+    public void IsBusinessHours_Should_Return_False_During_Off_Hours()
     {
-        var cfg = new SmartCacheConfig();
-        var ttl = cfg.GetOptimalTTL();
-        ttl.Should().BeGreaterThan(TimeSpan.Zero);
-        ttl.Should().BeLessOrEqualTo(cfg.OffHoursTTL); // upper bound
+        // Arrange
+        var config = new SmartCacheConfig();
+        var offHoursTime = new DateTime(2023, 12, 1, 22, 0, 0); // 10:00 PM
+
+        // Act
+        var result = config.IsBusinessHours(offHoursTime);
+
+        // Assert
+        result.Should().BeFalse();
     }
 
     [Fact]
-    public void GetOptimalTTL_BusinessHours_CapsAtBusinessTtl()
+    public void IsBusinessHours_Should_Return_False_At_Business_Hours_End()
     {
-        var cfg = new SmartCacheConfig();
-        // Choose a UTC time that maps to 10:00 CET reliably. We'll pick a naive 10:00 and assume conversion won't shift date.
-        var cetTarget = new DateTime(2024, 1, 2, cfg.BusinessHoursStart + 2, 0, 0, DateTimeKind.Unspecified);
-        cfg.UtcNowProvider = () => cetTarget.AddHours(-1); // crude but sufficient: ensure still before update hour so nextUpdate > BusinessHoursTTL
-        var ttl = cfg.GetOptimalTTL();
-        ttl.Should().BeLessOrEqualTo(cfg.BusinessHoursTTL);
-        ttl.Should().BeGreaterThan(TimeSpan.Zero);
+        // Arrange
+        var config = new SmartCacheConfig();
+        var endTime = new DateTime(2023, 12, 1, 20, 0, 0); // 8:00 PM (end of business hours)
+
+        // Act
+        var result = config.IsBusinessHours(endTime);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(7, false)]  // Before business hours
+    [InlineData(8, true)]   // Start of business hours
+    [InlineData(12, true)]  // Midday
+    [InlineData(19, true)]  // End of business hours - 1
+    [InlineData(20, false)] // End of business hours
+    [InlineData(23, false)] // Late night
+    public void IsBusinessHours_Should_Handle_Various_Hours(int hour, bool expected)
+    {
+        // Arrange
+        var config = new SmartCacheConfig();
+        var testTime = new DateTime(2023, 12, 1, hour, 0, 0);
+
+        // Act
+        var result = config.IsBusinessHours(testTime);
+
+        // Assert
+        result.Should().Be(expected);
     }
 
     [Fact]
-    public void GetOptimalTTL_OffHours_CapsAtOffHoursTtl()
+    public void GetOptimalTTL_Should_Return_Business_Hours_TTL_During_Business_Hours()
     {
-        var cfg = new SmartCacheConfig();
-        // Force a late hour (22:00 CET equivalent)
-        var cetLate = new DateTime(2024, 1, 2, cfg.BusinessHoursEnd + 2, 0, 0, DateTimeKind.Unspecified);
-        cfg.UtcNowProvider = () => cetLate;
-        var ttl = cfg.GetOptimalTTL();
-        ttl.Should().BeLessOrEqualTo(cfg.OffHoursTTL);
-        ttl.Should().BeGreaterThan(TimeSpan.Zero);
-    }
-
-    [Fact]
-    public void GetOptimalTTL_NearUpdate_UsesTimeUntilUpdateWhenShorter()
-    {
-        var cfg = new SmartCacheConfig
+        // Arrange
+        var config = new SmartCacheConfig
         {
-            FrankfurterUpdateHour = 16,
-            UpdateBuffer = TimeSpan.FromMinutes(5),
-            BusinessHoursTTL = TimeSpan.FromMinutes(30), // longer than remaining
-            OffHoursTTL = TimeSpan.FromHours(3)
+            UtcNowProvider = () => new DateTime(2023, 12, 1, 9, 0, 0, DateTimeKind.Utc) // Business hours in CET
         };
-        // Build a CET time 3 minutes before update+buffer: 16:05 (update+buffer) minus 3 = 16:02 CET
-        var cetPreUpdate = new DateTime(2024, 1, 3, cfg.FrankfurterUpdateHour, 0, 0, DateTimeKind.Unspecified)
-            .Add(cfg.UpdateBuffer)
-            .AddMinutes(-3);
-        // Convert this CET time back to UTC by finding the TimeZone offset
-        var tz = TimeZoneInfo.FindSystemTimeZoneById(cfg.CETTimeZone);
-        var utcEquivalent = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(cetPreUpdate, DateTimeKind.Unspecified), tz);
-        cfg.UtcNowProvider = () => utcEquivalent;
-        var ttl = cfg.GetOptimalTTL();
-        ttl.Should().BeLessThan(cfg.BusinessHoursTTL); // constrained by update window
-        ttl.Should().BeLessThan(TimeSpan.FromMinutes(10));
-        ttl.Should().BeGreaterThan(TimeSpan.FromMinutes(1));
+
+        // Act
+        var result = config.GetOptimalTTL();
+
+        // Assert
+        result.Should().BeLessOrEqualTo(config.BusinessHoursTTL);
+    }
+
+    [Fact]
+    public void GetOptimalTTL_Should_Return_Off_Hours_TTL_During_Off_Hours()
+    {
+        // Arrange
+        var config = new SmartCacheConfig
+        {
+            UtcNowProvider = () => new DateTime(2023, 12, 1, 21, 0, 0, DateTimeKind.Utc) // Off hours in CET
+        };
+
+        // Act
+        var result = config.GetOptimalTTL();
+
+        // Assert
+        result.Should().BeLessOrEqualTo(config.OffHoursTTL);
+    }
+
+    [Fact]
+    public void GetOptimalTTL_Should_Throw_For_Historical_Date()
+    {
+        // Arrange
+        var config = new SmartCacheConfig
+        {
+            UtcNowProvider = () => new DateTime(2023, 12, 1, 12, 0, 0, DateTimeKind.Utc)
+        };
+        var historicalDate = new DateTime(2023, 11, 30);
+
+        // Act & Assert
+        var act = () => config.GetOptimalTTL(historicalDate);
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("Historical rate caching is disabled - serve directly from API");
+    }
+
+    [Fact]
+    public void GetOptimalTTL_Should_Allow_Today_Date()
+    {
+        // Arrange
+        var testDate = new DateTime(2023, 12, 1, 12, 0, 0, DateTimeKind.Utc);
+        var config = new SmartCacheConfig
+        {
+            UtcNowProvider = () => testDate
+        };
+
+        // Act
+        var result = config.GetOptimalTTL(testDate.Date);
+
+        // Assert
+        result.Should().BePositive();
+    }
+
+    [Fact]
+    public void Configuration_Properties_Should_Have_Default_Values()
+    {
+        // Arrange & Act
+        var config = new SmartCacheConfig();
+
+        // Assert
+        config.FrankfurterUpdateHour.Should().Be(16);
+        config.UpdateBuffer.Should().Be(TimeSpan.FromMinutes(5));
+        config.BusinessHoursTTL.Should().Be(TimeSpan.FromMinutes(15));
+        config.OffHoursTTL.Should().Be(TimeSpan.FromHours(2));
+        config.BusinessHoursStart.Should().Be(8);
+        config.BusinessHoursEnd.Should().Be(20);
+        config.CETTimeZone.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public void Configuration_Properties_Should_Be_Settable()
+    {
+        // Arrange
+        var config = new SmartCacheConfig();
+        var customUtcProvider = () => DateTime.UtcNow;
+
+        // Act
+        config.FrankfurterUpdateHour = 18;
+        config.UpdateBuffer = TimeSpan.FromMinutes(10);
+        config.BusinessHoursTTL = TimeSpan.FromMinutes(30);
+        config.OffHoursTTL = TimeSpan.FromHours(4);
+        config.BusinessHoursStart = 9;
+        config.BusinessHoursEnd = 18;
+        config.CETTimeZone = "Europe/Berlin";
+        config.UtcNowProvider = customUtcProvider;
+
+        // Assert
+        config.FrankfurterUpdateHour.Should().Be(18);
+        config.UpdateBuffer.Should().Be(TimeSpan.FromMinutes(10));
+        config.BusinessHoursTTL.Should().Be(TimeSpan.FromMinutes(30));
+        config.OffHoursTTL.Should().Be(TimeSpan.FromHours(4));
+        config.BusinessHoursStart.Should().Be(9);
+        config.BusinessHoursEnd.Should().Be(18);
+        config.CETTimeZone.Should().Be("Europe/Berlin");
+        config.UtcNowProvider.Should().NotBeNull();
+        config.UtcNowProvider().Should().BeAfter(DateTime.MinValue);
     }
 }

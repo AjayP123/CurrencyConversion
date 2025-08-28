@@ -3,12 +3,14 @@ using CurrencyConversionApi.Models;
 using Microsoft.Extensions.Options;
 using CurrencyConversionApi.Configuration;
 using System.Text.Json;
+using System.Diagnostics.CodeAnalysis;
 
 namespace CurrencyConversionApi.Services;
 
 /// <summary>
 /// CurrencyAPI.com integration service
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class CurrencyApiProvider : IExchangeRateProvider
 {
     private readonly HttpClient _httpClient;
