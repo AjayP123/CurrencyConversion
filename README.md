@@ -206,6 +206,9 @@ dotnet test --filter "Category=Integration"
 
 ### Test Categories
 - **Unit Tests**: Service logic, validation, utilities
+Coverage Report
+<img width="2412" height="1374" alt="image" src="https://github.com/user-attachments/assets/79e3258a-0ccd-440c-a89f-34b8052b032a" />
+
 
 
 ## 🔍 Monitoring & Observability
