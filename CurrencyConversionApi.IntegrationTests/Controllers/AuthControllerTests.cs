@@ -9,9 +9,9 @@ using Xunit;
 
 namespace CurrencyConversionApi.IntegrationTests.Controllers;
 
-public class AuthControllerIntegrationTests : BaseIntegrationTest
+public class AuthControllerTests : BaseIntegrationTest
 {
-    public AuthControllerIntegrationTests(IntegrationTestWebApplicationFactory factory) : base(factory)
+    public AuthControllerTests(IntegrationTestWebApplicationFactory factory) : base(factory)
     {
     }
 
