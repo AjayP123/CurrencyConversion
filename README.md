@@ -348,6 +348,15 @@ CloudWatch (Logging & Monitoring)
 3. **AWS Account** with appropriate permissions
 4. **Git** to clone the repository
 
+### ⚠️ Important Deployment Order
+
+**Why this specific order matters:**
+- The CloudFormation stack includes an ECS Service that references a Docker image in ECR
+- If the image doesn't exist when the stack is created, the ECS tasks will fail to start
+- By creating the ECR repository first and pushing the image, we ensure the ECS service can successfully pull and run the container
+
+This approach follows AWS best practices for containerized application deployment.
+
 ### 🔧 Step-by-Step Deployment
 
 #### Step 1: Clone and Prepare the Repository
@@ -361,10 +370,42 @@ cd CurrencyConversion
 ls cloudformation-template.yaml
 ```
 
-#### Step 2: Deploy AWS Infrastructure
+#### Step 2: Create ECR Repository (Infrastructure Only)
+
+First, we need to create just the ECR repository so we can push our Docker image:
 
 ```bash
-# Deploy the CloudFormation stack
+# Create a minimal stack with just ECR repository
+aws ecr create-repository \
+  --repository-name currency-conversion-api-v2 \
+  --region eu-west-1
+```
+
+#### Step 3: Build and Push Docker Image
+
+```bash
+# Get ECR login token and login
+aws ecr get-login-password --region eu-west-1 | \
+  docker login --username AWS --password-stdin \
+  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-west-1.amazonaws.com
+
+# Build the Docker image
+docker build -t currency-conversion-api-v2 .
+
+# Tag the image for ECR
+docker tag currency-conversion-api-v2:latest \
+  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
+
+# Push the image to ECR
+docker push $(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
+```
+
+#### Step 4: Deploy Complete AWS Infrastructure
+
+Now that the Docker image exists in ECR, we can deploy the full infrastructure:
+
+```bash
+# Deploy the CloudFormation stack with all resources
 aws cloudformation create-stack \
   --stack-name currency-conversion-api-v2 \
   --template-body file://cloudformation-template.yaml \
@@ -376,28 +417,14 @@ aws cloudformation describe-stacks \
   --stack-name currency-conversion-api-v2 \
   --region eu-west-1 \
   --query 'Stacks[0].StackStatus'
+
+# Wait for stack creation to complete (this may take 5-10 minutes)
+aws cloudformation wait stack-create-complete \
+  --stack-name currency-conversion-api-v2 \
+  --region eu-west-1
 ```
 
-#### Step 3: Build and Push Docker Image
-
-```bash
-# Get ECR login token
-aws ecr get-login-password --region eu-west-1 | \
-  docker login --username AWS --password-stdin \
-  331185322835.dkr.ecr.eu-west-1.amazonaws.com
-
-# Build the Docker image
-docker build -t currency-conversion-api-v2 .
-
-# Tag the image for ECR
-docker tag currency-conversion-api-v2:latest \
-  331185322835.dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
-
-# Push the image to ECR
-docker push 331185322835.dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
-```
-
-#### Step 4: Verify Deployment
+#### Step 5: Verify Deployment
 
 ```bash
 # Get the Load Balancer URL
