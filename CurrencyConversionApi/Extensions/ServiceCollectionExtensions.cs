@@ -274,34 +274,25 @@ public static class ApplicationBuilderExtensions
     /// </summary>
     public static IApplicationBuilder UseApplicationPipeline(this IApplicationBuilder app, IWebHostEnvironment env)
     {
+        // Forwarded headers (must be first for Load Balancer)
+        app.UseForwardedHeaders();
+
         // Exception handling
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
         // Request logging
         app.UseMiddleware<RequestLoggingMiddleware>();
-        // Development specific middleware
-        if (env.IsDevelopment())
+        
+        // Enable Swagger in all environments for testing
+        app.UseSwagger();
+        app.UseSwaggerUI(c =>
         {
-            app.UseSwagger();
-            app.UseSwaggerUI(c =>
-            {
-                c.SwaggerEndpoint("/swagger/v1/swagger.json", "Currency Conversion API v1");
-                c.RoutePrefix = string.Empty; // Serve Swagger at root
-            });
-        }
-
-        // Security headers
-        app.Use(async (context, next) =>
-        {
-            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            context.Response.Headers["X-Frame-Options"] = "DENY";
-            context.Response.Headers["X-XSS-Protection"] = "1; mode=block";
-            context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-            await next();
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Currency Conversion API v1");
+            c.RoutePrefix = "swagger"; // Serve Swagger at /swagger
         });
 
         // Standard middleware
-        app.UseHttpsRedirection();
+        // app.UseHttpsRedirection(); // Disabled for Load Balancer
         app.UseCors("DefaultPolicy");
         app.UseAuthentication();
         app.UseAuthorization();

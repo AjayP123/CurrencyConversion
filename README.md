@@ -311,30 +311,167 @@ services.AddHttpClient<Provider>()
 - ✅ Exception handling without information disclosure
 
 
-## 📊 Deployment
+## 📊 AWS ECS Deployment Guide
 
-### AWS ECS Fargate Production Strategy
+This section provides a complete guide for deploying the Currency Conversion API on AWS ECS Fargate with production-grade infrastructure including Load Balancer, Auto Scaling, WAF, and monitoring.
 
-#### Architecture Vision
+### 🏗️ Infrastructure Architecture
+
 ```
-Internet → AWS WAF → ALB → ECS Fargate → CloudWatch
-        (Rate Limit) (Load Balance) (Auto Scale) (Monitor)
+Internet Traffic
+      ↓
+  AWS WAF (Rate Limiting: 2000 req/5min)
+      ↓
+Application Load Balancer
+      ↓
+ECS Fargate Service (Auto Scaling: 2-10 tasks)
+      ↓
+Docker Containers (Currency API)
+      ↓
+CloudWatch (Logging & Monitoring)
 ```
 
-### Deployment Approach
+### 🚀 Deployment Features
 
-**Phase 1: Infrastructure Setup**
-- Set up VPC, subnets, and security groups
-- Create Application Load Balancer
-- Configure ECS cluster and service definitions
+- **Container Orchestration**: ECS Fargate (serverless containers)
+- **Load Balancing**: Application Load Balancer with health checks
+- **Auto Scaling**: CPU, Memory, and Request-based scaling
+- **Security**: WAF with rate limiting and AWS managed rules
+- **Networking**: Custom VPC with public subnets across AZs
+- **Monitoring**: CloudWatch logging with 7-day retention
+- **Container Registry**: ECR with lifecycle policies
 
-**Phase 2: Container Deployment**
-- Build and push Docker images to ECR
-- Deploy containers with auto-scaling policies
-- Configure health checks and monitoring
+### 📋 Prerequisites
 
-**Phase 3: Production **
-- Enable WAF rate limiting rules
-- Set up CloudWatch dashboards
-- Configure alerts and automated responses
+1. **AWS CLI v2** installed and configured
+2. **Docker** installed and running
+3. **AWS Account** with appropriate permissions
+4. **Git** to clone the repository
+
+### 🔧 Step-by-Step Deployment
+
+#### Step 1: Clone and Prepare the Repository
+
+```bash
+# Clone the repository
+git clone https://github.com/AjayP123/CurrencyConversion.git
+cd CurrencyConversion
+
+# Ensure you have the cloudformation-template.yaml file
+ls cloudformation-template.yaml
+```
+
+#### Step 2: Deploy AWS Infrastructure
+
+```bash
+# Deploy the CloudFormation stack
+aws cloudformation create-stack \
+  --stack-name currency-conversion-api-v2 \
+  --template-body file://cloudformation-template.yaml \
+  --capabilities CAPABILITY_IAM \
+  --region eu-west-1
+
+# Monitor stack creation progress
+aws cloudformation describe-stacks \
+  --stack-name currency-conversion-api-v2 \
+  --region eu-west-1 \
+  --query 'Stacks[0].StackStatus'
+```
+
+#### Step 3: Build and Push Docker Image
+
+```bash
+# Get ECR login token
+aws ecr get-login-password --region eu-west-1 | \
+  docker login --username AWS --password-stdin \
+  331185322835.dkr.ecr.eu-west-1.amazonaws.com
+
+# Build the Docker image
+docker build -t currency-conversion-api-v2 .
+
+# Tag the image for ECR
+docker tag currency-conversion-api-v2:latest \
+  331185322835.dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
+
+# Push the image to ECR
+docker push 331185322835.dkr.ecr.eu-west-1.amazonaws.com/currency-conversion-api-v2:latest
+```
+
+#### Step 4: Verify Deployment
+
+```bash
+# Get the Load Balancer URL
+aws cloudformation describe-stacks \
+  --stack-name currency-conversion-api-v2 \
+  --region eu-west-1 \
+  --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerURL`].OutputValue' \
+  --output text
+
+# Test the health endpoint
+curl http://your-load-balancer-url/health
+
+# Access Swagger UI
+curl http://your-load-balancer-url/swagger
+```
+
+### 🔧 Infrastructure Components
+
+#### 1. **Networking**
+```yaml
+VPC: 10.0.0.0/16
+Public Subnets: 
+  - 10.0.1.0/24 (eu-west-1a)
+  - 10.0.2.0/24 (eu-west-1b)
+Security Groups:
+  - ALB: Ports 80/443 from Internet
+  - ECS: Port 8080 from ALB only
+```
+
+#### 2. **ECS Configuration**
+```yaml
+Cluster: currency-conversion-api-v2-cluster
+Service: currency-conversion-api-v2-service
+Task Definition:
+  CPU: 256 units
+  Memory: 512 MB
+  Platform: Fargate
+```
+
+#### 3. **Auto Scaling Policies**
+```yaml
+CPU Utilization: 70% target
+Memory Utilization: 80% target
+Request Count: 1000 requests/minute per target
+Min Capacity: 2 tasks
+Max Capacity: 10 tasks
+```
+
+#### 4. **Load Balancer**
+```yaml
+Health Check:
+  Path: /health
+  Interval: 30 seconds
+  Timeout: 10 seconds
+  Healthy Threshold: 2
+  Unhealthy Threshold: 5
+```
+
+#### 5. **WAF Rules**
+```yaml
+Rate Limiting: 2000 requests per 5 minutes per IP
+AWS Managed Rules: Common Rule Set for OWASP protection
+```
+
+### 📊 Monitoring & Observability
+
+#### CloudWatch Metrics
+- **ECS Service**: CPU/Memory utilization, task count
+- **Load Balancer**: Request count, latency, error rates
+- **Auto Scaling**: Scaling activities and alarms
+
+#### Log Groups
+```bash
+# View application logs
+aws logs tail /ecs/currency-conversion-api-v2 --follow --region eu-west-1
+```
 

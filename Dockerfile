@@ -18,8 +18,8 @@ RUN dotnet publish CurrencyConversionApi/CurrencyConversionApi.csproj -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS final
 WORKDIR /app
 
-# Install timezone data (required for TimeZoneInfo)
-RUN apk add --no-cache tzdata
+# Install timezone data and wget (required for health checks)
+RUN apk add --no-cache tzdata wget
 
 # Non-root user
 RUN addgroup -g 1001 -S appgroup || true
@@ -27,7 +27,9 @@ RUN adduser -S -D -H -u 1001 -G appgroup appuser || true
 USER appuser
 
 ENV ASPNETCORE_URLS=http://+:8080 \
-    ASPNETCORE_ENVIRONMENT=Production
+    ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
+    ASPNETCORE_ALLOWEDHOSTS=*
 
 # (Optional) Set configuration via environment variables for ECS
 # Example secrets/vars (define in ECS task definition / Parameter Store):
