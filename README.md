@@ -192,6 +192,13 @@ docker stop currency-api && docker rm currency-api
 
 ## 🧪 Testing
 
+### Test Architecture
+
+The Currency Conversion API includes comprehensive testing at multiple levels:
+
+- **Unit Tests**: Service logic, validation, utilities, and business rules
+- **Integration Tests**: End-to-end API testing with real HTTP calls
+
 ### Run All Tests
 ```bash
 # Run all tests
@@ -200,14 +207,48 @@ dotnet test
 # Run with coverage
 dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
-# Run specific test category
-dotnet test --filter "Category=Integration"
+# Run specific test projects
+dotnet test CurrencyConversionApi.Tests/
+dotnet test CurrencyConversionApi.IntegrationTests/
+
 ```
 
+### 🔄 Integration Tests
+
+#### Test Coverage
+- ✅ **Authentication**: JWT login, role validation, unauthorized access
+- ✅ **Currency Endpoints**: Conversion, latest rates, historical data
+- ✅ **Authorization**: Role-based access (Basic, Premium, Admin)
+- ✅ **Validation**: Input validation and error handling
+
+
+#### Test Structure
+```csharp
+public abstract class BaseIntegrationTest : IClassFixture<IntegrationTestWebApplicationFactory>
+{
+    protected void AuthenticateAs(string username, string role)
+    protected readonly HttpClient Client;
+}
+```
+
+**Test Files:**
+- `AuthControllerTests.cs` - Login and token validation
+- `CurrencyControllerTests.cs` - API endpoints and authorization
+
 ### Test Categories
-- **Unit Tests**: Service logic, validation, utilities
-Coverage Report
+- **Unit Tests**: Service logic, validation, utilities, and business rules
+- **Integration Tests**: Full API workflow testing with authentication and real HTTP calls
+
+### Coverage Report
 <img width="2412" height="1374" alt="image" src="https://github.com/user-attachments/assets/79e3258a-0ccd-440c-a89f-34b8052b032a" />
+
+### Test Results Dashboard
+
+Integration test results provide insights into:
+- ✅ **API Endpoint Coverage**: Authentication and currency conversion endpoints
+- ✅ **Authentication Scenarios**: Valid/invalid credential handling  
+- ✅ **Authorization Testing**: Role-based access control validation
+- ✅ **Error Handling**: Proper HTTP status codes and error responses
 
 
 
